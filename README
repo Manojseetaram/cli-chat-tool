@@ -19,6 +19,11 @@ $env:RELAY="cli-chat-tool-g1n0.onrender.com"; viva
 set RELAY=cli-chat-tool-g1n0.onrender.com && viva.exe
 
 
+rustup target add x86_64-pc-windows-gnu
+brew install mingw-w64
+cargo build --release -p client --target x86_64-pc-windows-gnu
 
-
-//target/x86_64-pc-windows-gnu/release/viva-windows-x86_64.exe
+#target/x86_64-pc-windows-gnu/release/viva-windows-x86_64.exe
+cargo build --release -p client
+cp target/release/client ~/.local/bin/viva
+viva  # should now say "Connecting to cli-chat-tool-g1n0.onrender.com"

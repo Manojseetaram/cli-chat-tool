@@ -15,18 +15,12 @@ use uuid::Uuid;
 
 type Tx = mpsc::UnboundedSender<String>;
 
-// ── Per-connection peer ───────────────────────────────────────────────────────
 struct RoomPeer {
     nick: String,
     tx: Tx,
 }
 
-// ── Room state ────────────────────────────────────────────────────────────────
-// A room is keyed by "roomkey::sorted(nickA,nickB)" so the SAME pair of nicks
-// always lands in the SAME room, and a stranger with a different nick is
-// simply refused — even if they know the room key.
 struct RoomMeta {
-    /// The two allowed nicks (exactly these two, in any order)
     allowed: [String; 2],
     peers: Vec<RoomPeer>,
 }
@@ -57,7 +51,6 @@ struct WsParams {
     friend: String,
 }
 
-// ── Entry point ───────────────────────────────────────────────────────────────
 #[tokio::main]
 async fn main() {
     let mongo_uri = std::env::var("MONGO_URI")
@@ -92,7 +85,6 @@ async fn main() {
     axum::serve(listener, app).await.expect("server crashed");
 }
 
-// ── WebSocket upgrade ─────────────────────────────────────────────────────────
 async fn ws_handler(
     ws: WebSocketUpgrade,
     Query(p): Query<WsParams>,
@@ -101,24 +93,20 @@ async fn ws_handler(
     ws.on_upgrade(move |socket| handle_socket(socket, p, state))
 }
 
-// ── Canonical room ID: roomkey + sorted pair of nicks ─────────────────────────
-// This guarantees Alice+Bob always get the same room regardless of who connects first.
 fn room_id(room_key: &str, nick: &str, friend: &str) -> String {
     let mut pair = [nick.to_lowercase(), friend.to_lowercase()];
     pair.sort();
     format!("{}::{}::{}", room_key.trim(), pair[0], pair[1])
 }
 
-// ── Handle one WebSocket connection ──────────────────────────────────────────
 async fn handle_socket(socket: WebSocket, params: WsParams, state: AppState) {
     let (mut ws_send, mut ws_recv) = socket.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
 
-    let nick   = params.nick.trim().to_string();
-    let friend = params.friend.trim().to_string();
+    let nick     = params.nick.trim().to_string();
+    let friend   = params.friend.trim().to_string();
     let raw_room = params.room.trim().to_string();
 
-    // Basic validation
     if nick.is_empty() || friend.is_empty() || raw_room.is_empty() {
         let _ = tx.send(json!({ "type": "error", "text": "nick, friend, and room key are all required." }).to_string());
         drain_and_close(ws_send, rx).await;
@@ -131,10 +119,8 @@ async fn handle_socket(socket: WebSocket, params: WsParams, state: AppState) {
         return;
     }
 
-    // Build the canonical room id
     let room = room_id(&raw_room, &nick, &friend);
 
-    // Auth: either create the room (first peer) or validate against existing allowed pair
     {
         let mut rooms = state.rooms.lock().await;
         let meta = rooms.entry(room.clone()).or_insert_with(|| RoomMeta {
@@ -146,7 +132,6 @@ async fn handle_socket(socket: WebSocket, params: WsParams, state: AppState) {
             peers: Vec::new(),
         });
 
-        // Check that this nick is one of the two allowed nicks
         let nick_allowed   = meta.allowed.contains(&nick);
         let friend_allowed = meta.allowed.contains(&friend);
 
@@ -160,7 +145,18 @@ async fn handle_socket(socket: WebSocket, params: WsParams, state: AppState) {
             return;
         }
 
-        // Prevent the same nick from connecting twice in the same room
+        // ── FIX: Remove any stale/dead peer with the same nick before checking ──
+        // A peer is stale if its channel is closed (disconnected without cleanup).
+        meta.peers.retain(|p| {
+            if p.nick == nick {
+                // If the channel is closed, the peer is gone — remove it silently.
+                !p.tx.is_closed()
+            } else {
+                true
+            }
+        });
+
+        // After pruning stale peers, check if nick is still actively connected.
         let already_connected = meta.peers.iter().any(|p| p.nick == nick);
         if already_connected {
             let _ = tx.send(json!({
@@ -175,13 +171,9 @@ async fn handle_socket(socket: WebSocket, params: WsParams, state: AppState) {
         meta.peers.push(RoomPeer { nick: nick.clone(), tx: tx.clone() });
     }
 
-    // Send message history to the newly joined peer
     send_history(&state.mongo, &room, &tx).await;
-
-    // Notify everyone in room
     broadcast_system(&state.rooms, &room, &format!("{} joined", nick)).await;
 
-    // Forward outgoing messages to WebSocket
     let fwd = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             if ws_send.send(Message::Text(msg)).await.is_err() {
@@ -190,7 +182,6 @@ async fn handle_socket(socket: WebSocket, params: WsParams, state: AppState) {
         }
     });
 
-    // Receive loop
     while let Some(Ok(msg)) = ws_recv.next().await {
         if let Message::Text(raw) = msg {
             if let Ok(val) = serde_json::from_str::<Value>(&raw) {
@@ -203,8 +194,7 @@ async fn handle_socket(socket: WebSocket, params: WsParams, state: AppState) {
     {
         let mut rooms = state.rooms.lock().await;
         if let Some(meta) = rooms.get_mut(&room) {
-            meta.peers.retain(|p| !p.tx.is_closed());
-            // Remove empty rooms to free memory
+            meta.peers.retain(|p| p.nick != nick);
             if meta.peers.is_empty() {
                 rooms.remove(&room);
             }
@@ -215,7 +205,6 @@ async fn handle_socket(socket: WebSocket, params: WsParams, state: AppState) {
     broadcast_system(&state.rooms, &room, &format!("{} left", nick)).await;
 }
 
-// ── Handle one incoming event ─────────────────────────────────────────────────
 async fn handle_event(val: &Value, nick: &str, room: &str, sender_tx: &Tx, state: &AppState) {
     match val["type"].as_str().unwrap_or("") {
         "msg" => {
@@ -249,10 +238,8 @@ async fn handle_event(val: &Value, nick: &str, room: &str, sender_tx: &Tx, state
                 "edited":    false,
             }).to_string();
 
-            // Broadcast to friend only (not back to sender)
             broadcast_except(&state.rooms, room, &payload, sender_tx).await;
 
-            // Send ack back to sender with real server-assigned id + timestamp
             let _ = sender_tx.send(json!({
                 "type":      "ack",
                 "msg_id":    msg_id,
@@ -263,11 +250,8 @@ async fn handle_event(val: &Value, nick: &str, room: &str, sender_tx: &Tx, state
         "edit" => {
             let msg_id   = sv(val, "msg_id");
             let new_text = sv(val, "text");
-            if msg_id.is_empty() || new_text.trim().is_empty() {
-                return;
-            }
+            if msg_id.is_empty() || new_text.trim().is_empty() { return; }
 
-            // Only allow editing own messages
             let res = state.mongo.update_one(
                 doc! { "msg_id": &msg_id, "nick": nick, "room": room },
                 doc! { "$set": { "text": &new_text, "edited": true } },
@@ -284,7 +268,6 @@ async fn handle_event(val: &Value, nick: &str, room: &str, sender_tx: &Tx, state
                 }
             }
 
-            // Broadcast edit to ALL peers in room (including sender so their UI updates)
             broadcast(&state.rooms, room, &json!({
                 "type":   "edit",
                 "msg_id": msg_id,
@@ -294,11 +277,8 @@ async fn handle_event(val: &Value, nick: &str, room: &str, sender_tx: &Tx, state
 
         "delete" => {
             let msg_id = sv(val, "msg_id");
-            if msg_id.is_empty() {
-                return;
-            }
+            if msg_id.is_empty() { return; }
 
-            // Only allow deleting own messages
             let res = state.mongo.update_one(
                 doc! { "msg_id": &msg_id, "nick": nick, "room": room },
                 doc! { "$set": { "deleted": true } },
@@ -325,7 +305,6 @@ async fn handle_event(val: &Value, nick: &str, room: &str, sender_tx: &Tx, state
     }
 }
 
-// ── Send last 100 messages to a newly joined peer ────────────────────────────
 async fn send_history(mongo: &Collection<ChatMessage>, room: &str, tx: &Tx) {
     let opts = FindOptions::builder()
         .sort(doc! { "timestamp": 1 })
@@ -351,7 +330,6 @@ async fn send_history(mongo: &Collection<ChatMessage>, room: &str, tx: &Tx) {
     }
 }
 
-// ── Broadcast helpers ─────────────────────────────────────────────────────────
 async fn broadcast(rooms: &Rooms, room: &str, payload: &str) {
     let rooms = rooms.lock().await;
     if let Some(meta) = rooms.get(room) {
@@ -365,30 +343,21 @@ async fn broadcast_except(rooms: &Rooms, room: &str, payload: &str, skip_tx: &Tx
     let rooms = rooms.lock().await;
     if let Some(meta) = rooms.get(room) {
         for peer in &meta.peers {
-            if peer.tx.same_channel(skip_tx) {
-                continue;
-            }
+            if peer.tx.same_channel(skip_tx) { continue; }
             let _ = peer.tx.send(payload.to_string());
         }
     }
 }
 
 async fn broadcast_system(rooms: &Rooms, room: &str, text: &str) {
-    broadcast(
-        rooms,
-        room,
-        &json!({ "type": "system", "text": text }).to_string(),
-    )
-    .await;
+    broadcast(rooms, room, &json!({ "type": "system", "text": text }).to_string()).await;
 }
 
-// ── Drain the send queue and close the socket (used on auth failure) ─────────
 async fn drain_and_close<S>(mut ws_send: S, mut rx: mpsc::UnboundedReceiver<String>)
 where
     S: SinkExt<Message> + Unpin,
     S::Error: std::fmt::Debug,
 {
-    // Send any queued error messages before closing
     while let Ok(msg) = rx.try_recv() {
         let _ = ws_send.send(Message::Text(msg)).await;
     }

@@ -18,7 +18,6 @@ const CY: &str = "\x1b[96m";
 const RE: &str = "\x1b[91m";
 const GR: &str = "\x1b[92m";
 
-// ── Hardcoded relay — just type `viva` to connect ─────────────────────────────
 const DEFAULT_RELAY: &str = "cli-chat-tool-g1n0.onrender.com";
 
 #[derive(Clone)]
@@ -87,17 +86,17 @@ async fn main() {
     let order:   Order   = Arc::new(Mutex::new(Vec::new()));
     let pending: Pending = Arc::new(Mutex::new(Vec::new()));
 
-    // ── Ctrl+C handler — clean exit with goodbye message ─────────────────────
     let (exit_tx, mut exit_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
     let exit_tx2 = exit_tx.clone();
     ctrlc::set_handler(move || { let _ = exit_tx2.send(()); }).ok();
 
     let (s2, o2, p2, n2, f2) = (store.clone(), order.clone(), pending.clone(), nick.clone(), friend.clone());
 
-    // Shared buffer of what user is currently typing, so incoming messages
-    // can reprint it after clearing the line — prevents the auto-send bug.
+    // ── Shared buffer of what the user is currently typing ────────────────────
+    // The receive task uses this to reprint the prompt + partial input after
+    // rendering an incoming message, preventing text from disappearing.
     let typing: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
-    let typing2 = typing.clone();
+    let typing_recv = typing.clone();
 
     // ── Receive task ──────────────────────────────────────────────────────────
     tokio::spawn(async move {
@@ -106,20 +105,34 @@ async fn main() {
                 if let Ok(val) = serde_json::from_str::<Value>(&text) {
                     if val["type"].as_str() == Some("error") {
                         let msg = val["text"].as_str().unwrap_or("Unknown error").to_string();
+                        // ── Save partial, erase line, print error, reprint prompt+partial ──
+                        let partial = typing_recv.lock().unwrap().clone();
                         print!("\r\x1b[K");
                         println!("\n  {RE}✗  {msg}{R}");
                         println!("  {DG}  Make sure both sides use the exact same nick, friend, and room key.{R}\n");
+                        print!("{DG}  ›{R} {partial}");
                         io::stdout().flush().unwrap();
+                        // Don't exit — let user see the error but stay alive.
+                        // (Remove the exit below if you want reconnect-in-place in future.)
                         std::process::exit(1);
                     }
 
-                    // Save what user was typing, erase line, render message,
-                    // then reprint prompt + what they had typed.
-                    // This is the fix for the auto-send bug.
-                    let partial = typing2.lock().unwrap().clone();
+                    // ── FIX for "typing gets disrupted" bug ───────────────────
+                    // 1. Save whatever the user had typed so far.
+                    // 2. Erase the current prompt line completely.
+                    // 3. Print the incoming message bubble on its own clean lines.
+                    // 4. Reprint the prompt and the user's partial text.
+                    // This prevents the incoming message from interleaving with
+                    // the user's half-typed input.
+                    let partial = typing_recv.lock().unwrap().clone();
+
+                    // Move to column 0 and erase the current line (the prompt).
                     print!("\r\x1b[K");
                     io::stdout().flush().unwrap();
+
                     handle_in(&val, &n2, &f2, &s2, &o2, &p2);
+
+                    // Reprint prompt + whatever the user had typed.
                     print!("{DG}  ›{R} {partial}");
                     io::stdout().flush().unwrap();
                 }
@@ -131,16 +144,24 @@ async fn main() {
         std::process::exit(1);
     });
 
-    // ── Stdin reader thread → async channel ──────────────────────────────────
+    // ── Stdin reader — runs in a blocking thread, sends lines to async ────────
+    // Also updates the shared `typing` buffer character-by-character so the
+    // receive task always knows what's on the prompt line.
+    //
+    // Note: standard read_line() is line-buffered, so `typing` is only accurate
+    // after each character on platforms where the terminal echoes. The important
+    // thing is that after Enter, we clear it to "" immediately so the receive
+    // task reprints a clean prompt.
     let (line_tx, mut line_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    let typing3 = typing.clone();
+    let typing_stdin = typing.clone();
     std::thread::spawn(move || {
         loop {
             let mut buf = String::new();
             match io::stdin().read_line(&mut buf) {
                 Ok(0) | Err(_) => { let _ = line_tx.send("\x04".to_string()); break; }
                 Ok(_) => {
-                    *typing3.lock().unwrap() = String::new();
+                    // Clear the shared buffer — the line has been submitted.
+                    *typing_stdin.lock().unwrap() = String::new();
                     let _ = line_tx.send(buf.trim().to_string());
                 }
             }
@@ -152,7 +173,6 @@ async fn main() {
 
     loop {
         tokio::select! {
-            // ── Ctrl+C or signal ─────────────────────────────────────────────
             _ = exit_rx.recv() => {
                 print!("\r\x1b[K");
                 println!("\n  {CY}Thank you, bye! 👋{R}\n");
@@ -161,11 +181,9 @@ async fn main() {
                 std::process::exit(0);
             }
 
-            // ── Line typed by user ────────────────────────────────────────────
             maybe = line_rx.recv() => {
                 let line = match maybe { Some(l) => l, None => break };
 
-                // Terminal closed / EOF
                 if line == "\x04" {
                     print!("\r\x1b[K");
                     println!("\n  {CY}Thank you, bye! 👋{R}\n");
@@ -180,11 +198,11 @@ async fn main() {
                     continue;
                 }
 
+                // Erase the echoed input line before printing the bubble.
                 print!("\x1b[1A\r\x1b[K");
                 io::stdout().flush().unwrap();
 
                 match line.as_str() {
-                    // ── Exit — no confirmation, just goodbye ──────────────────
                     "exit"|"/exit"|"/quit"|"bye"|"quit" => {
                         println!("\n  {CY}Thank you, bye! 👋{R}\n");
                         tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
