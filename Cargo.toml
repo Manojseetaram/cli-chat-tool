@@ -2,7 +2,7 @@
 members = [
     "crates/client",
     "crates/relay",
-    "crates/common"
+    
 ]
 
 resolver = "2"

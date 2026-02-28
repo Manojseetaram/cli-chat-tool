@@ -1,13 +1,11 @@
 [package]
 name = "relay"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+
 
 [dependencies]
-common = { path = "../common" }
-axum = "0.7"
+axum = { version = "0.7", features = ["ws"] }
 tokio = { version = "1", features = ["full"] }
+futures = "0.3"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-uuid = { version = "1", features = ["v4"] }
-lazy_static = "1"
