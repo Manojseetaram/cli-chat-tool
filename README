@@ -7,8 +7,13 @@
 
 
 
- irm https://raw.githubusercontent.com/Manojseetaram/cli-chat-tool/main/install.ps1 | iex
+ 
+irm https://raw.githubusercontent.com/Manojseetaram/cli-chat-tool/main/install.ps1 | iex
 
+#Mac/linux
+RELAY=cli-chat-tool-g1n0.onrender.com viva
+# PowerShell
+$env:RELAY="cli-chat-tool-g1n0.onrender.com"; viva
 
-
- 890-4
+# CMD
+set RELAY=cli-chat-tool-g1n0.onrender.com && viva.exe
