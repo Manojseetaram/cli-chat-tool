@@ -12,6 +12,6 @@ pub async fn send_message(Json(msg): Json<Message>) -> &'static str {
 
 pub async fn fetch_messages(Path(room_id): Path<String>) -> Json<Vec<Message>> {
     let mut store = MESSAGE_STORE.lock().unwrap();
-    let messages = store.remove(&room_id).unwrap_or_default();
+ let messages = store.get(&room_id).cloned().unwrap_or_default();
     Json(messages)
 }
