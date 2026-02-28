@@ -67,7 +67,7 @@ async fn main() {
     };
 
     // ── Connect ───────────────────────────────────────────────────────────────
-    let relay  = std::env::var("RELAY").unwrap_or_else(|_| "127.0.0.1:3002".to_string());
+    let relay  = std::env::var("RELAY").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     let scheme = if relay.contains("railway.app")
         || relay.contains("render.com")
         || relay.contains("fly.dev")
@@ -82,7 +82,7 @@ async fn main() {
     print!("\n  {DG}Connecting to {}...{R}", relay);
     io::stdout().flush().unwrap();
 
-    let (ws_stream, _) = match connect_async(url).await {
+    let (ws_stream, _) = match connect_async(url.as_str()).await {
         Ok(r)  => r,
         Err(e) => {
             println!("\r  {RE}✗  Could not connect: {e}{R}");
