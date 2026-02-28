@@ -1,6 +1,6 @@
 use serde_json::Value;
 use std::io::{self, Write};
-
+use futures::SinkExt;
 use crate::{
     colors::*,
     types::{Msg, Order, Pending, Store},
