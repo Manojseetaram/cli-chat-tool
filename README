@@ -17,3 +17,8 @@ $env:RELAY="cli-chat-tool-g1n0.onrender.com"; viva
 
 # CMD
 set RELAY=cli-chat-tool-g1n0.onrender.com && viva.exe
+
+
+
+
+//
