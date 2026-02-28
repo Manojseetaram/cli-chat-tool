@@ -1,0 +1,12 @@
+# Rust
+/target
+**/target
+
+# macOS
+.DS_Store
+
+# Environment files
+.env
+
+# Logs
+*.log
