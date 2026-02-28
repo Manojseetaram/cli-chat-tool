@@ -7,7 +7,7 @@
 # ╚══════════════════════════════════════════════════════════════════════════╝
 
 # ── Stage 1: Build ────────────────────────────────────────────────────────────
-FROM rust:1.76-slim AS builder
+FROM rust:1.82-slim AS builder
 
 # Install build dependencies (needed for OpenSSL / TLS)
 RUN apt-get update && \
@@ -39,7 +39,7 @@ FROM debian:bookworm-slim
 
 # libssl3 for TLS connections to MongoDB Atlas (wss://)
 RUN apt-get update && \
-    apt-get install -y libssl3 ca-certificates && \
+    apt-get install -y libssl3 ca-certificates curl && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/relay /usr/local/bin/relay
