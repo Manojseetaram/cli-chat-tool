@@ -1,7 +1,13 @@
-
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  VIVA relay — production Dockerfile                                      ║
+# ║  Deploys the relay server only (client is a local binary).               ║
+# ║                                                                          ║
+# ║  Build:  docker build -t viva-relay .                                    ║
+# ║  Run:    docker run -e MONGO_URI=... -e PORT=3000 -p 3000:3000 viva-relay║
+# ╚══════════════════════════════════════════════════════════════════════════╝
 
 # ── Stage 1: Build ────────────────────────────────────────────────────────────
-FROM rust:1.85-slim AS builder
+FROM rust:latest AS builder
 
 # Install build dependencies (needed for OpenSSL / TLS)
 RUN apt-get update && \
@@ -19,7 +25,7 @@ COPY crates/client/Cargo.toml crates/client/Cargo.toml
 RUN mkdir -p crates/relay/src crates/client/src && \
     echo "fn main(){}" > crates/relay/src/main.rs  && \
     echo "fn main(){}" > crates/client/src/main.rs && \
-    cargo build --release -p relay 2>&1 | tail -5 && \
+    cargo build --release -p relay && \
     rm -rf crates/relay/src crates/client/src
 
 # Copy real sources and do the actual build
