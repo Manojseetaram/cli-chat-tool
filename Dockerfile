@@ -7,7 +7,7 @@
 # ╚══════════════════════════════════════════════════════════════════════════╝
 
 # ── Stage 1: Build ────────────────────────────────────────────────────────────
-FROM rust:1.82-slim AS builder
+FROM rust:1.85-slim AS builder
 
 # Install build dependencies (needed for OpenSSL / TLS)
 RUN apt-get update && \
@@ -45,7 +45,7 @@ RUN apt-get update && \
 COPY --from=builder /app/target/release/relay /usr/local/bin/relay
 
 # Render sets PORT automatically; default to 3000 locally
-ENV PORT=3002
+ENV PORT=3000
 
 EXPOSE $PORT
 
