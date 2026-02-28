@@ -1,0 +1,129 @@
+# ──────────────────────────────────────────────────────────────────────────────
+#  Viva — cross-platform binary release
+#
+#  Triggered when you push a tag like:  git tag v1.0.0 && git push --tags
+#
+#  Produces:
+#    viva-linux-x86_64         (Ubuntu / Debian / Fedora)
+#    viva-linux-aarch64        (Raspberry Pi, AWS ARM)
+#    viva-macos-x86_64         (Intel Mac)
+#    viva-macos-aarch64        (Apple Silicon M1/M2/M3)
+#    viva-windows-x86_64.exe   (Windows 10/11)
+#
+#  Users install with ONE command — no Rust, no Docker required:
+#    curl -fsSL https://raw.githubusercontent.com/YOU/viva/main/install.sh | bash
+# ──────────────────────────────────────────────────────────────────────────────
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+
+          # ── Linux x86_64 (musl = fully static, runs everywhere) ──────────────
+          - name: Linux x86_64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            artifact: viva-linux-x86_64
+            cross: false
+
+          # ── Linux ARM64 ───────────────────────────────────────────────────────
+          - name: Linux ARM64
+            runner: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            artifact: viva-linux-aarch64
+            cross: true   # uses cross-rs for cross-compilation
+
+          # ── macOS Intel ───────────────────────────────────────────────────────
+          - name: macOS Intel
+            runner: macos-13
+            target: x86_64-apple-darwin
+            artifact: viva-macos-x86_64
+            cross: false
+
+          # ── macOS Apple Silicon ───────────────────────────────────────────────
+          - name: macOS Apple Silicon
+            runner: macos-latest
+            target: aarch64-apple-darwin
+            artifact: viva-macos-aarch64
+            cross: false
+
+          # ── Windows x86_64 ────────────────────────────────────────────────────
+          - name: Windows x86_64
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: viva-windows-x86_64.exe
+            cross: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # ── Linux: install musl tools ────────────────────────────────────────────
+      - name: Install musl tools
+        if: runner.os == 'Linux' && !matrix.cross
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y musl-tools
+
+      # ── ARM cross-compile via cross-rs ────────────────────────────────────────
+      - name: Install cross
+        if: matrix.cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      # ── Cache cargo registry ─────────────────────────────────────────────────
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      # ── Build client binary ───────────────────────────────────────────────────
+      - name: Build (native)
+        if: "!matrix.cross"
+        run: cargo build --release -p client --target ${{ matrix.target }}
+
+      - name: Build (cross)
+        if: matrix.cross
+        run: cross build --release -p client --target ${{ matrix.target }}
+
+      # ── Rename output ─────────────────────────────────────────────────────────
+      - name: Rename binary (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cp target/${{ matrix.target }}/release/client ${{ matrix.artifact }}
+          chmod +x ${{ matrix.artifact }}
+
+      - name: Rename binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Copy-Item "target\${{ matrix.target }}\release\client.exe" "${{ matrix.artifact }}"
+
+      # ── Upload to GitHub Release ──────────────────────────────────────────────
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.artifact }}
