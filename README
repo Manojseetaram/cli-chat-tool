@@ -21,4 +21,4 @@ set RELAY=cli-chat-tool-g1n0.onrender.com && viva.exe
 
 
 
-//
+//target/x86_64-pc-windows-gnu/release/viva-windows-x86_64.exe
