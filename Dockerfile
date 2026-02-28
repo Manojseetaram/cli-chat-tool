@@ -1,10 +1,4 @@
-# ╔══════════════════════════════════════════════════════════════════════════╗
-# ║  VIVA relay — production Dockerfile                                      ║
-# ║  Deploys the relay server only (client is a local binary).               ║
-# ║                                                                          ║
-# ║  Build:  docker build -t viva-relay .                                    ║
-# ║  Run:    docker run -e MONGO_URI=... -e PORT=3000 -p 3000:3000 viva-relay║
-# ╚══════════════════════════════════════════════════════════════════════════╝
+
 
 # ── Stage 1: Build ────────────────────────────────────────────────────────────
 FROM rust:1.85-slim AS builder
@@ -45,7 +39,7 @@ RUN apt-get update && \
 COPY --from=builder /app/target/release/relay /usr/local/bin/relay
 
 # Render sets PORT automatically; default to 3000 locally
-ENV PORT=3000
+ENV PORT=3002
 
 EXPOSE $PORT
 
